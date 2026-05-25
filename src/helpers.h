@@ -1,0 +1,66 @@
+#if !defined(HELPERS_H)
+#define HELPERS_H
+
+#include <stdint.h>
+
+#define MIN(a, b) (((a) < (b)) ? (a) : (b))
+#define MAX(a, b) (((a) > (b)) ? (a) : (b))
+#define CEIL_DIVI(m, n) (((m) + (n) - 1) / (n))
+#define PADDING_POW2(n, p) ((((p) - ((n) & ((p) - 1))) & ((p) - 1)))
+#define GIB(n) ((u64)(n) << 30)
+#define MIB(n) ((u64)(n) << 20)
+#define KIB(n) ((u64)(n) << 10)
+#define LOWER_BITS_MASK(n) (((1u) << (n)) - 1)
+#define MOD_POW2(n, p) ((n) & ((p) - 1))
+
+typedef uint8_t u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef uint64_t u64;
+typedef int8_t i8;
+typedef int16_t i16;
+typedef int32_t i32;
+typedef int64_t i64;
+typedef float f32;
+typedef double f64;
+
+#define CHECK_CUDA(x)                                                          \
+  do {                                                                         \
+    cudaError_t err = x;                                                       \
+    if (err != cudaSuccess) {                                                  \
+      fprintf(stderr, "CUDA error in %s at %s:%d: %s (%s=%d)\n", __FUNCTION__, \
+              __FILE__, __LINE__, cudaGetErrorString(err),                     \
+              cudaGetErrorName(err), err);                                     \
+      abort();                                                                 \
+    }                                                                          \
+  } while (0)
+
+#define CHECK_CUSPARSE(x)                                                      \
+  do {                                                                         \
+    cusparseStatus_t err = x;                                                  \
+    if (err != CUSPARSE_STATUS_SUCCESS) {                                      \
+      fprintf(stderr, "CUSPARSE error in %s at %s:%d: %s (%s=%d)\n",           \
+              __FUNCTION__, __FILE__, __LINE__, cusparseGetErrorString(err),   \
+              cusparseGetErrorName(err), err);                                 \
+      abort();                                                                 \
+    }                                                                          \
+  } while (0)
+
+#define CHECK_SPMM(x)                                                          \
+  do {                                                                         \
+    SpmmStatus_t err = x;                                                      \
+    if (err != SPMM_STATUS_SUCCESS) {                                          \
+      fprintf(stderr, "SPMM error in %s at %s:%d: (%s=%d)\n", __FUNCTION__,    \
+              __FILE__, __LINE__, spmm_get_error_name(err), err);              \
+      abort();                                                                 \
+    }                                                                          \
+  } while (0)
+
+typedef enum {
+  SPMM_INTERNAL_STATUS_SUCCESS = 0,
+  SPMM_INTERNAL_STATUS_MEMOP_FAIL = 1,
+  SPMM_INTERNAL_STATUS_ALREADY_INITIALIZED = 2,
+  SPMM_INTERNAL_STATUS_POINTER_INVALID_MEM_TYPE = 3,
+} SpmmInternalStatus_t;
+
+#endif // HELPERS_H
