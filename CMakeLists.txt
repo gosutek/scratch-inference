@@ -20,7 +20,8 @@ add_executable(inf
 
   external/cJSON.c
 
-  src/cuda/cuda_allocator.cu
+  src/cuda/api/cuda_allocator.cu
+  src/cuda/cuda_helpers.cuh
 )
 
 target_compile_options(inf PRIVATE
@@ -52,5 +53,6 @@ target_compile_options(inf PRIVATE
 target_include_directories(inf PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${CMAKE_CURRENT_SOURCE_DIR}/src/cuda
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/cuda/api
   ${CMAKE_CURRENT_SOURCE_DIR}/external
 )

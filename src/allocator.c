@@ -60,7 +60,7 @@ b32 exec_ctx_create(ExecCtx** ctx, const u64 model_bsize)
 		return 0;
 	}
 
-	if (!mem_arena_host_push((HostArena*)(ctx), sizeof(*ctx)->dev_arena, (void**)&(*ctx)->dev_arena)) {
+	if (!mem_arena_host_push((HostArena*)(*ctx), sizeof(*ctx)->dev_arena, (void**)&(*ctx)->dev_arena)) {
 		return 0;
 	}
 #ifndef NDEBUG
@@ -145,8 +145,7 @@ b32 mem_arena_host_destroy(HostArena* arena)
 	return 1;
 }
 
-b32 mem_arena_host_push(HostArena* const arena,
-	const u64 req_size, void** ptr_out)
+b32 mem_arena_host_push(HostArena* const arena, const u64 req_size, void** ptr_out)
 {
 	const u64 aligned_pos = arena->pos + PADDING_POW2(arena->pos, sizeof(void*)); /* the pointer returned should be naturally aligned */
 	const u64 new_pos = aligned_pos + req_size;
