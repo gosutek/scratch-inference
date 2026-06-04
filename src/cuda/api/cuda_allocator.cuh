@@ -10,7 +10,7 @@ extern "C"
 
 	typedef struct DevArena
 	{
-		uint8_t* _d_ptr;
+		u8* _d_ptr;
 
 		u64 size;
 		u64 pos;

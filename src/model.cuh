@@ -39,7 +39,7 @@ typedef struct Weights
 	// f32* rms_post_ffn; // TODO: For later
 
 	// Attention
-	// 35 pointers, on for each layer, each pointing to a bf16 flat matrix in device memory of size [1536, 4096] (already transposed)
+	// 35 pointers, one for each layer, each pointing to a bf16 flat matrix in device memory of size [1536, 4096] (already transposed)
 	bf16** wq;
 	bf16** wk;
 	bf16** wv;
@@ -61,7 +61,11 @@ typedef struct Model
 {
 	Config  config;
 	Weights weights;
-	i32     fd;
-	f32*    data;  // NOTE: Should be bf16? mmap ptr
-	u64     file_bsize;
+	bf16*   data;  // NOTE: Should be bf16? mmap ptr
+
+	i32 fd;
+
+	u64 file_bsize;
+	u64 header_bsize;
+	u64 model_bsize;
 } Model;

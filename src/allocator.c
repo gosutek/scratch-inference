@@ -50,7 +50,7 @@ static i32 vm_uncommit(void* addr, const u64 size)
 	return madvise(addr, size, MADV_DONTNEED) == 0; /* Subsequent access will result in zero-fill-on-demand pages */
 }
 
-b32 exec_ctx_create(ExecCtx** ctx, const u64 model_bsize)
+b32 exec_ctx_create(ExecCtx** ctx)
 {
 	if (*ctx) {  // already exists
 		return 0;
@@ -63,12 +63,7 @@ b32 exec_ctx_create(ExecCtx** ctx, const u64 model_bsize)
 	if (!mem_arena_host_push((HostArena*)(*ctx), sizeof(*ctx)->dev_arena, (void**)&(*ctx)->dev_arena)) {
 		return 0;
 	}
-#ifndef NDEBUG
-	printf("Allocating %lu bytes on the GPU\n", model_bsize);
-#endif
-	if (!mem_arena_dev_create(&(*ctx)->dev_arena, model_bsize)) {
-		return 0;
-	}
+	(*ctx)->dev_arena._d_ptr = NULL;
 
 	return 1;
 }
@@ -81,11 +76,13 @@ b32 exec_ctx_destroy(ExecCtx** ctx)
 
 	// Free the device memory first
 	// if for some reason we freed the host memory first then we'd have no handle to the device chunk
-	if ((*ctx)->dev_arena._d_ptr && !mem_arena_dev_destroy(&(*ctx)->dev_arena)) {
-		return 0;
+	if ((*ctx)->dev_arena._d_ptr) {
+		if (mem_arena_dev_destroy(&(*ctx)->dev_arena) != 1) {
+			return 0;
+		}
 	}
 
-	if (!mem_arena_host_destroy((HostArena*)(*ctx))) {
+	if (mem_arena_host_destroy((HostArena*)(*ctx)) != 1) {
 		return 0;
 	}
 
@@ -158,13 +155,13 @@ b32 mem_arena_host_push(HostArena* const arena, const u64 req_size, void** ptr_o
 			abort();
 		}
 
-		if (!vm_commit((uint8_t*)arena + arena->commit_pos, commit_size)) {
+		if (!vm_commit((u8*)arena + arena->commit_pos, commit_size)) {
 			return 0;
 		}
 		arena->commit_pos += arena->commit_size;
 	}
 
-	*ptr_out = (uint8_t*)arena + aligned_pos;
+	*ptr_out = (u8*)arena + aligned_pos;
 	arena->pos = new_pos;
 
 	return 1;

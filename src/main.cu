@@ -1,3 +1,5 @@
+#include <cstdint>
+#include <cstdlib>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,6 +10,7 @@
 #include "cJSON.h"
 
 #include "allocator.h"
+#include "cuda_mem_wrapper.cuh"
 #include "helpers.h"
 #include "model.cuh"
 
@@ -21,7 +24,7 @@ static i32 get_file_bsize(const char* filepath, u64* const bsize)
 	return 0;
 }
 
-static i32 build_model(ExecCtx* const e_ctx, Model* const model, const char* model_config_filepath)
+static void parse_model_config(ExecCtx* const e_ctx, Model* const model, const char* model_config_filepath)
 {
 	FILE* file = fopen(model_config_filepath, "r");
 	if (!file) {
@@ -57,7 +60,7 @@ static i32 build_model(ExecCtx* const e_ctx, Model* const model, const char* mod
 	model->config.n_layers = cJSON_GetObjectItem(model_config, "num_hidden_layers")->valueint;
 
 	cJSON_Delete(model_config);
-	return 1;
+	return;
 }
 
 static void print_model(const Model* const model)
@@ -74,13 +77,35 @@ static void print_model(const Model* const model)
 	return;
 }
 
-int main(void)
+static i32 parse_model_header(ExecCtx* const e_ctx, Model* const model, FILE* const file, cJSON** header)
 {
-	const char* model_filepath = "gemma-4-E2B-it/model.safetensors";
-	const char* model_config_filepath = "gemma-4-E2B-it/config.json";
+	if (!file || (*header)) {
+		return 0;
+	}
+	char* json_buf = NULL;
+	if (mem_arena_host_push((HostArena*)e_ctx, model->header_bsize + 1, (void**)&json_buf) != 1) {
+		fprintf(stderr, "failed pool push\n");
+		exit(EXIT_FAILURE);
+	}
+	if (fread(json_buf, sizeof *json_buf, model->header_bsize, file) != model->header_bsize) {
+		fprintf(stderr, "failed read\n");
+		exit(EXIT_FAILURE);
+	}
 
-	u64 safetensor_bsize = 0;  // total file size of the safetensor in bytes
-	if (get_file_bsize(model_filepath, &safetensor_bsize) != 1) {
+	json_buf[model->header_bsize] = '\0';
+
+	*header = cJSON_Parse(json_buf);
+	if (!(*header)) {
+		return 0;
+	}
+	mem_arena_host_pop((HostArena*)e_ctx, model->header_bsize + 1);  // free my own json_buf as cJSON allocates its own that we free later on
+
+	return 1;
+}
+
+static void build_model(ExecCtx** const e_ctx, Model* const model, const char* model_filepath, const char* model_config_filepath)
+{
+	if (get_file_bsize(model_filepath, &model->file_bsize) != 1) {
 		fprintf(stderr, "couldn't read file size of %s\n", model_filepath);
 		exit(EXIT_FAILURE);
 	}
@@ -91,72 +116,87 @@ int main(void)
 		exit(EXIT_FAILURE);
 	}
 
-	u64 header_bsize = 0;  // header size of the safetensor in bytes
-	if (fread(&header_bsize, sizeof header_bsize, 1, file) != 1) {
+	if (fread(&model->header_bsize, sizeof model->header_bsize, 1, file) != 1) {
 		fprintf(stderr, "failed read\n");
 		exit(EXIT_FAILURE);
 	}
 
-	// This is the byte size of the actual model (weights), we need to allocate at least this much for DevArena
-	const u64 model_bsize = safetensor_bsize - header_bsize - sizeof header_bsize;
-
-	ExecCtx* e_ctx = NULL;
-	if (exec_ctx_create(&e_ctx, model_bsize) != 1) {
-		fprintf(stderr, "failed pool allocation\n");
+	if (exec_ctx_create(e_ctx) != 1) {
+		fprintf(stderr, "failed e_ctx creation allocation\n");
 		exit(EXIT_FAILURE);
 	}
-	Model model;
-	build_model(e_ctx, &model, model_config_filepath);
-	print_model(&model);
-
-	char* json_buf = NULL;
-	if (mem_arena_host_push((HostArena*)e_ctx, header_bsize + 1, (void**)&json_buf) != 1) {
-		fprintf(stderr, "failed pool push\n");
+	parse_model_config(*e_ctx, model, model_config_filepath);
+	cJSON* header = NULL;
+	if (parse_model_header(*e_ctx, model, file, &header) != 1) {
+		fprintf(stderr, "failed to parse model header\n");
 		exit(EXIT_FAILURE);
 	}
 
-	if (fread(json_buf, sizeof *json_buf, header_bsize, file) != header_bsize) {
-		fprintf(stderr, "failed read\n");
+	const char* TENSOR_FILTER = "model.language_model";
+	const u64   TENSOR_FILTER_LEN = strlen(TENSOR_FILTER);
+
+	cJSON* first_lm_node = NULL;
+	u64    lm_offset_start = UINT64_MAX;
+	u64    lm_offset_end = 0;
+
+	header = header->child;
+	for (cJSON* node = header; node != NULL; node = node->next) {
+		if (strlen(node->string) < TENSOR_FILTER_LEN || strncmp(node->string, TENSOR_FILTER, TENSOR_FILTER_LEN) != 0) {
+			continue;
+		}
+		if (first_lm_node == NULL) {
+			first_lm_node = node;
+		}
+
+		cJSON* offsets = cJSON_GetObjectItem(node, "data_offsets");
+		u64    start = (u64)cJSON_GetArrayItem(offsets, 0)->valuedouble;
+		u64    end = (u64)cJSON_GetArrayItem(offsets, 1)->valuedouble;
+
+		lm_offset_start = MIN(lm_offset_start, start);
+		lm_offset_end = MAX(lm_offset_end, end);
+	}
+
+	model->model_bsize = lm_offset_end - lm_offset_start;
+	const u64 padded_dev_alloc_bsize = model->model_bsize + PADDING_POW2(model->model_bsize, GIB(1));
+	if (mem_arena_dev_create(&(*e_ctx)->dev_arena, padded_dev_alloc_bsize) != 1) {
+		fprintf(stderr, "failed to allocate device memory\n");
 		exit(EXIT_FAILURE);
 	}
 
-	json_buf[header_bsize] = '\0';
+	if (mem_arena_dev_push(&(*e_ctx)->dev_arena, model->model_bsize, (void**)&model->data) != 1) {
+		fprintf(stderr, "failed to push pointer in pool\n");
+		exit(EXIT_FAILURE);
+	}
 
-	cJSON* header = cJSON_Parse(json_buf);
-
-	int   fd = fileno(file);
-	void* mapped = mmap(NULL, safetensor_bsize, PROT_READ, MAP_PRIVATE, fd, 0);
-	if (mapped == MAP_FAILED) {
+	model->fd = fileno(file);
+	void* model_mmap = mmap(NULL, model->file_bsize, PROT_READ, MAP_PRIVATE, model->fd, 0);
+	if (model_mmap == MAP_FAILED) {
 		fprintf(stderr, "failed to mmap safetensor\n");
 		exit(EXIT_FAILURE);
 	}
-	fclose(file);
-
-	cJSON*      node = header->child;
-	const char* tensor_filter = "model.language_model";
-	cJSON*      prev_end = NULL;
-	while (node != NULL) {
-		if (strlen(node->string) >= strlen(tensor_filter) && strncmp(node->string, tensor_filter, strlen(tensor_filter)) == 0) {  // filter out the vision and audio model
-			cJSON* dtype = cJSON_GetObjectItem(node, "dtype");
-			if (strcmp(dtype->valuestring, "BF16") != 0) {
-				fprintf(stderr, "Unexpected dtype for tensor '%s': %s\n", node->string, dtype->valuestring);
-				exit(EXIT_FAILURE);
-			}
-			cJSON* offsets = cJSON_GetObjectItem(node, "data_offsets");
-			cJSON* start = cJSON_GetArrayItem(offsets, 0);
-			cJSON* end = cJSON_GetArrayItem(offsets, 1);
-			if (prev_end && prev_end->valuedouble != start->valuedouble) {  // contiguous memory check
-				fprintf(stderr, "Unexpected ordering of tensors '%s'\n", node->string);
-				exit(EXIT_FAILURE);
-			}
-			prev_end = end;
-			// printf("%s: [%.0f, %.0f] %s\n", node->string, start->valuedouble, end->valuedouble, dtype->valuestring);
-		}
-		node = node->next;
-	}
+	model_mmap = (void*)((u8*)model_mmap + lm_offset_start);
+	printf("Tranferring\n");
+	cu_memcpy_htd((void*)model->data, model_mmap, model->model_bsize);
+	printf("Tranfer complete\n");
 
 	cJSON_Delete(header);
-	exec_ctx_destroy(&e_ctx);
+	munmap(model_mmap, model->file_bsize);
+	fclose(file);
+	if (exec_ctx_destroy(e_ctx) != 1) {
+		fprintf(stderr, "failed to destroy ctx\n");
+		exit(EXIT_FAILURE);
+	}
+	return;
+}
+
+int main(void)
+{
+	const char* model_filepath = "gemma-4-E2B-it/model.safetensors";
+	const char* model_config_filepath = "gemma-4-E2B-it/config.json";
+
+	ExecCtx* e_ctx = NULL;
+	Model    model;
+	build_model(&e_ctx, &model, model_filepath, model_config_filepath);
 
 #ifndef NDEBUG
 	if (e_ctx) {

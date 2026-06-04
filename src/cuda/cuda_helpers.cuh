@@ -12,7 +12,7 @@ typedef __nv_bfloat16_raw bf16;
   * +------------------------------------------------------------------------------+
 */
 
-constexpr uint8_t _CONSTANTS_WARP_SIZE = 32;
+constexpr u8 _CONSTANTS_WARP_SIZE = 32;
 
 /*
   * +------------------------------------------------------------------------------+
@@ -25,7 +25,7 @@ __device__ inline bool is_aligned(const void* addr, const size_t alignment_bytes
 	return (reinterpret_cast<uintptr_t>(addr) & (alignment_bytes - 1)) == 0;
 }
 
-__device__ inline uint8_t align(const void* base, const void* addr, const size_t alignment_bytes)
+__device__ inline u8 align(const void* base, const void* addr, const size_t alignment_bytes)
 {
 	const uintptr_t offset = reinterpret_cast<uintptr_t>(addr) - reinterpret_cast<uintptr_t>(base);
 	const uintptr_t aligned_offset = (reinterpret_cast<uintptr_t>(offset) + (alignment_bytes - 1)) & ~size_t(alignment_bytes - 1);

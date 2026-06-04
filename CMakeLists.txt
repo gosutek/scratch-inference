@@ -21,6 +21,7 @@ add_executable(inf
   external/cJSON.c
 
   src/cuda/api/cuda_allocator.cu
+  src/cuda/api/cuda_mem_wrapper.cu
   src/cuda/cuda_helpers.cuh
 )
 
