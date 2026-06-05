@@ -1,3 +1,4 @@
+#include <assert.h>  // works only in debug
 #include <cstdint>
 #include <cstdlib>
 #include <stdint.h>
@@ -125,14 +126,25 @@ static void build_model(ExecCtx** const e_ctx, Model* const model, const char* m
 		fprintf(stderr, "failed e_ctx creation allocation\n");
 		exit(EXIT_FAILURE);
 	}
+
 	parse_model_config(*e_ctx, model, model_config_filepath);
+	const u64 model_weight_bsize = sizeof **model->weights.wq * model->config.n_layers * 4;  // wq, wk, wv, wo = 4
+
+	if (mem_arena_host_push((HostArena*)(*e_ctx), model_weight_bsize, (void**)&model->weights.wq) != 1) {
+		fprintf(stderr, "failed to allocate for model weights\n");
+		exit(EXIT_FAILURE);
+	}
+	model->weights.wk = (bf16**)((u8*)model->weights.wq + model_weight_bsize / 4);
+	model->weights.wv = (bf16**)((u8*)model->weights.wk + model_weight_bsize / 4);
+	model->weights.wo = (bf16**)((u8*)model->weights.wv + model_weight_bsize / 4);
+
 	cJSON* header = NULL;
 	if (parse_model_header(*e_ctx, model, file, &header) != 1) {
 		fprintf(stderr, "failed to parse model header\n");
 		exit(EXIT_FAILURE);
 	}
 
-	const char* TENSOR_FILTER = "model.language_model";
+	const char* TENSOR_FILTER = "model.language_model.";
 	const u64   TENSOR_FILTER_LEN = strlen(TENSOR_FILTER);
 
 	cJSON* first_lm_node = NULL;
@@ -178,6 +190,45 @@ static void build_model(ExecCtx** const e_ctx, Model* const model, const char* m
 	printf("Tranferring\n");
 	cu_memcpy_htd((void*)model->data, model_mmap, model->model_bsize);
 	printf("Tranfer complete\n");
+
+#ifndef NDEBUG
+	i32 dbg_counter = 0;
+#endif
+
+	if (strcmp("model.language_model.embed_tokens.weight", first_lm_node->string) != 0) {
+		fprintf(stderr, "unxpected first node of json\n");
+		exit(EXIT_FAILURE);
+	}
+
+	model->weights.token_embedding_table = model->data;
+
+	const u64 PREFIX_LEN = TENSOR_FILTER_LEN + strlen("layers.");
+	for (cJSON* node = first_lm_node; cJSON_GetArrayItem(cJSON_GetObjectItem(node, "data_offsets"), 0)->valuedouble < lm_offset_end; node = node->next) {
+		/**
+      * node->string will be of this format
+      * model.language_model.layers.[layer_number].[tensor_name]
+      * with the following exceptions:
+      * 1. model.language_model.embed_tokens.weight
+      * 2. model.language_model.embed_tokens_per_layer.weight
+      * 3. model.language_model.norm.weight
+      * 4. model.language_model.per_layer_model_projection.weight
+      * 5. model.language_model.per_layer_projection_norm.weight
+      */
+
+		const char* p = node->string + PREFIX_LEN;
+		u32         layer = atoi(p);
+		while (*p && *p != '.') ++p;  // reach '.'
+		++p;                          // skip '.'
+		if (strcmp("self_attn.q_proj.weight", p) == 0) {
+			// TODO: LEFT HERE
+			model->weights.wq[layer - 1] = (u8*)model->data + (cJSON_GetArrayItem(cJSON_GetObjectItem(node, "data_offsets"), 0)->valuedouble - lm_offset_start);
+		}
+
+#ifndef NDEBUG
+		dbg_counter++;
+#endif
+	}
+	assert(dbg_counter == 600);
 
 	cJSON_Delete(header);
 	munmap(model_mmap, model->file_bsize);

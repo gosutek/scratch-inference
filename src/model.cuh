@@ -31,7 +31,7 @@ typedef struct Weights
 	// f32* token_embedding_table_per_layer; // TODO: For later
 
 	// RMS
-	bf16* rms_input;
+	// bf16** rms_input; // TODO: FOR NOW
 	// f32* rms_q;  // TODO: For later
 	// f32* rms_k; // TODO: For later
 	// f32* rms_post_attn; // TODO: For later
@@ -61,7 +61,7 @@ typedef struct Model
 {
 	Config  config;
 	Weights weights;
-	bf16*   data;  // NOTE: Should be bf16? mmap ptr
+	bf16*   data;
 
 	i32 fd;
 
