@@ -15,6 +15,28 @@
 #include "helpers.h"
 #include "model.cuh"
 
+static b32 correctness_weight_ptr_partition(ExecCtx* e_ctx, const bf16* const d_ptr, const bf16* const h_ptr, i32 n)
+{
+	bf16* h_buf = NULL;
+	if (mem_arena_host_push((HostArena*)e_ctx, n * sizeof *d_ptr, (void**)&h_buf) != 1) {
+		fprintf(stderr, "failed pool allocation\n");
+		exit(EXIT_FAILURE);
+	}
+	cu_memcpy_dth((void*)h_buf, (void*)d_ptr, n * sizeof *d_ptr);
+
+	for (i32 i = 0; i < n; ++i) {
+		f32 d_val = __bfloat162float(h_buf[i]);
+		f32 h_val = __bfloat162float(h_ptr[i]);
+		if (d_val != h_val) {
+			mem_arena_host_pop((HostArena*)e_ctx, n * sizeof *d_ptr);
+			fprintf(stderr, "correctness_weight_ptr_partition failed [%d] gpu: %.5f cpu: %.5f\n", i, d_val, h_val);
+			return false;
+		}
+	}
+	mem_arena_host_pop((HostArena*)e_ctx, n * sizeof *d_ptr);
+	return true;
+}
+
 static i32 get_file_bsize(const char* filepath, u64* const bsize)
 {
 	struct stat st;
@@ -222,12 +244,28 @@ static void build_model(ExecCtx** const e_ctx, Model* const model, const char* m
 		const u64 offset = (u64)(cJSON_GetArrayItem(cJSON_GetObjectItem(node, "data_offsets"), 0)->valuedouble - lm_offset_start);
 		if (strcmp("self_attn.q_proj.weight", p) == 0) {
 			model->weights.wq[layer] = (bf16*)((u8*)model->data + offset);
+#ifndef NDEBUG
+			bf16* h_ptr = (bf16*)((u8*)model_mmap + offset);
+			correctness_weight_ptr_partition(*e_ctx, model->weights.wq[layer], h_ptr, 5);
+#endif
 		} else if (strcmp("self_attn.k_proj.weight", p) == 0) {
 			model->weights.wk[layer] = (bf16*)((u8*)model->data + offset);
+#ifndef NDEBUG
+			bf16* h_ptr = (bf16*)((u8*)model_mmap + offset);
+			correctness_weight_ptr_partition(*e_ctx, model->weights.wk[layer], h_ptr, 5);
+#endif
 		} else if (strcmp("self_attn.v_proj.weight", p) == 0) {
 			model->weights.wv[layer] = (bf16*)((u8*)model->data + offset);
+#ifndef NDEBUG
+			bf16* h_ptr = (bf16*)((u8*)model_mmap + offset);
+			correctness_weight_ptr_partition(*e_ctx, model->weights.wv[layer], h_ptr, 5);
+#endif
 		} else if (strcmp("self_attn.o_proj.weight", p) == 0) {
 			model->weights.wo[layer] = (bf16*)((u8*)model->data + offset);
+#ifndef NDEBUG
+			bf16* h_ptr = (bf16*)((u8*)model_mmap + offset);
+			correctness_weight_ptr_partition(*e_ctx, model->weights.wo[layer], h_ptr, 5);
+#endif
 		}
 
 #ifndef NDEBUG
