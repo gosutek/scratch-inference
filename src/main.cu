@@ -219,9 +219,15 @@ static void build_model(ExecCtx** const e_ctx, Model* const model, const char* m
 		u32         layer = atoi(p);
 		while (*p && *p != '.') ++p;  // reach '.'
 		++p;                          // skip '.'
+		const u64 offset = (u64)(cJSON_GetArrayItem(cJSON_GetObjectItem(node, "data_offsets"), 0)->valuedouble - lm_offset_start);
 		if (strcmp("self_attn.q_proj.weight", p) == 0) {
-			// TODO: LEFT HERE
-			model->weights.wq[layer - 1] = (u8*)model->data + (cJSON_GetArrayItem(cJSON_GetObjectItem(node, "data_offsets"), 0)->valuedouble - lm_offset_start);
+			model->weights.wq[layer] = (bf16*)((u8*)model->data + offset);
+		} else if (strcmp("self_attn.k_proj.weight", p) == 0) {
+			model->weights.wk[layer] = (bf16*)((u8*)model->data + offset);
+		} else if (strcmp("self_attn.v_proj.weight", p) == 0) {
+			model->weights.wv[layer] = (bf16*)((u8*)model->data + offset);
+		} else if (strcmp("self_attn.o_proj.weight", p) == 0) {
+			model->weights.wo[layer] = (bf16*)((u8*)model->data + offset);
 		}
 
 #ifndef NDEBUG

@@ -4,7 +4,7 @@
 
 #include "helpers.h"
 
-typedef __nv_bfloat16_raw bf16;
+typedef __nv_bfloat16 bf16;
 
 /*
   * +------------------------------------------------------------------------------+
