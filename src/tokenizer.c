@@ -3,9 +3,27 @@
 #include <helpers.h>
 #include <tokenizer.h>
 
+#define UTF8_MAX_NBYTES 4
+#define BITS_IN_BYTE 8
+
+static inline u32 utf8_byte_count(const char* const c)
+{
+	const unsigned char* const uc = (const unsigned char* const)c;
+
+	if (*uc < 0x80) {
+		return 1;
+	} else if (*uc < 0xe0) {
+		return 2;
+	} else if (*uc < 0xf0) {
+		return 3;
+	} else {
+		return 4;
+	}
+}
+
 // char* not because we're expecting a string
 // but because 'c' might be unicode of more than 1 byte
-static u32 utf8_decoder(const char* const c)
+static inline u32 utf8_decode(const char* const c)
 {
 	const unsigned char* const uc = (const unsigned char* const)c;
 
@@ -39,25 +57,40 @@ static u32 utf8_decoder(const char* const c)
 	}
 }
 
-static void tokenizer_normalize(char* c)
+static void tokenizer_normalize(ExecCtx* e_ctx, const char* input, char** output)
 {
 	const char* pattern = " ";
 	const char* content = "▁";
+	const u64   content_byte_count = utf8_byte_count(content);
 
-	while (*c != '\0') {
-		if (*c == *pattern) {
-			*c = *content;
+	u64 normalized_strlen = 0;
+	for (const char* c = input; *c != '\0'; ++c) {
+		if (*c == *pattern) {  // WARN: This only works if 'pattern' is one byte
+			normalized_strlen += content_byte_count;
+		} else {
+			++normalized_strlen;
 		}
-		++c;
 	}
+
+	mem_arena_host_push((HostArena*)e_ctx, normalized_strlen + 1, (void**)output);  // +1 for '\0'
+	char* c = *output;
+	while (*input != '\0') {
+		if (*input == *pattern) {
+			memcpy(c, content, content_byte_count);
+			c += content_byte_count;
+		} else {
+			*c = *input;
+			++c;
+		}
+		++input;
+	}
+	*c = '\0';
 }
 
 void tokenizer_tokenize(ExecCtx* e_ctx, const char* input)
 {
-	char* input_buf = NULL;
-	mem_arena_host_push((HostArena*)e_ctx, strlen(input) * sizeof *input, (void**)&input_buf);
-	strcpy(input_buf, input);
-	tokenizer_normalize(input_buf);
-	printf("%s\n", input_buf);
-	mem_arena_host_pop((HostArena*)e_ctx, strlen(input) * sizeof *input);
+	char* normalized_input = NULL;
+	tokenizer_normalize(e_ctx, input, &normalized_input);
+	printf("%s\n", normalized_input);
+	mem_arena_host_pop((HostArena*)e_ctx, strlen(normalized_input));
 }

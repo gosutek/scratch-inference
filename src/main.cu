@@ -275,7 +275,7 @@ static void build_model(ExecCtx** const e_ctx, Model* const model, const char* m
 	}
 	assert(dbg_counter == 600);
 
-	tokenizer_tokenize(*e_ctx, "Hello, World!");
+	tokenizer_tokenize(*e_ctx, "Γειά σου κόσμε!");
 
 	cJSON_Delete(header);
 	munmap(model_mmap, model->file_bsize);
