@@ -60,6 +60,7 @@ static void parse_model_config(ExecCtx* const e_ctx, Model* const model, const c
 	get_file_bsize(model_config_filepath, &model_config_bsize);
 
 	char* json_buf = NULL;
+	// WARN: Am I popping this?
 	if (mem_arena_host_push((HostArena*)e_ctx, model_config_bsize + 1, (void**)&json_buf) != 1) {
 		fprintf(stderr, "failed pool push\n");
 		exit(EXIT_FAILURE);
@@ -72,7 +73,11 @@ static void parse_model_config(ExecCtx* const e_ctx, Model* const model, const c
 	json_buf[model_config_bsize] = '\0';  // cJSON works on null-terminated strings
 
 	cJSON* model_config = cJSON_Parse(json_buf);
+
+	mem_arena_host_pop((HostArena*)e_ctx, model_config_bsize + 1);
+
 	model_config = model_config->child;
+	// TODO: Replace this with cJSON_GetObjectItemCaseSensitive
 	while (strcmp(model_config->string, "text_config") != 0) {
 		model_config = model_config->next;
 	}

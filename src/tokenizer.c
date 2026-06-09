@@ -1,10 +1,22 @@
+#include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+
+#include "cJSON.h"
 
 #include <helpers.h>
 #include <tokenizer.h>
 
-#define UTF8_MAX_NBYTES 4
-#define BITS_IN_BYTE 8
+// TODO: This is a duplicate with the one in main.cu
+static i32 get_file_bsize(const char* filepath, u64* const bsize)
+{
+	struct stat st;
+	if (stat(filepath, &st) == 0) {
+		*bsize = (u64)st.st_size;
+		return 1;
+	}
+	return 0;
+}
 
 static inline u32 utf8_byte_count(const char* const c)
 {
@@ -57,11 +69,12 @@ static inline u32 utf8_decode(const char* const c)
 	}
 }
 
-static void tokenizer_normalize(ExecCtx* e_ctx, const char* input, char** output)
+static void tokenizer_normalizer(ExecCtx* e_ctx, const char* input, char** output)
 {
-	const char* pattern = " ";
+	const char* pattern = " ";  // TODO: Eventually have these be read from the tokenizer.json
 	const char* content = "▁";
-	const u64   content_byte_count = utf8_byte_count(content);
+
+	const u64 content_byte_count = utf8_byte_count(content);
 
 	u64 normalized_strlen = 0;
 	for (const char* c = input; *c != '\0'; ++c) {
@@ -72,7 +85,10 @@ static void tokenizer_normalize(ExecCtx* e_ctx, const char* input, char** output
 		}
 	}
 
-	mem_arena_host_push((HostArena*)e_ctx, normalized_strlen + 1, (void**)output);  // +1 for '\0'
+	if (mem_arena_host_push((HostArena*)e_ctx, normalized_strlen + 1, (void**)output) != 1) {  // +1 for '\0'
+		fprintf(stderr, "failed to push to arena\n");
+		exit(EXIT_FAILURE);
+	}
 	char* c = *output;
 	while (*input != '\0') {
 		if (*input == *pattern) {
@@ -87,10 +103,55 @@ static void tokenizer_normalize(ExecCtx* e_ctx, const char* input, char** output
 	*c = '\0';
 }
 
-void tokenizer_tokenize(ExecCtx* e_ctx, const char* input)
+static void tokenizer_parse_config(ExecCtx* const e_ctx)
+{
+	FILE* file = fopen("gemma-4-E2B-it/tokenizer.json", "r");
+	if (!file) {
+		fprintf(stderr, "failed to open 'gemma-4-E2B-it/tokenizer.json'\n");
+		exit(EXIT_FAILURE);
+	}
+	u64 tokenizer_config_file_bsize = 0;
+	get_file_bsize("gemma-4-E2B-it/tokenizer.json", &tokenizer_config_file_bsize);
+
+	char* json_buf = NULL;
+	if (mem_arena_host_push((HostArena*)e_ctx, tokenizer_config_file_bsize + 1, (void**)&json_buf) != 1) {
+		fprintf(stderr, "failed to push to arena\n");
+		exit(EXIT_FAILURE);
+	}
+
+	if (fread((void*)json_buf, sizeof *json_buf, tokenizer_config_file_bsize, file) != tokenizer_config_file_bsize) {
+		fprintf(stderr, "failed to fread the tokenizer_config.json\n");
+		exit(EXIT_FAILURE);
+	}
+
+	mem_arena_host_pop((HostArena*)e_ctx, tokenizer_config_file_bsize + 1);
+
+	cJSON* tokenizer_config_json = cJSON_Parse(json_buf);
+	if (tokenizer_config_json == NULL) {
+		fprintf(stderr, "failed to cJSON_Parse 'tokenizer_confg.json\n");
+		exit(EXIT_FAILURE);
+	}
+
+	tokenizer_config_json = tokenizer_config_json->child;
+	cJSON* model_object = cJSON_GetObjectItemCaseSensitive(tokenizer_config_json, "model");
+	if (model_object == NULL) {
+		fprintf(stderr, "unexpected error: 'tokenizer_config.json' doesn't have a 'model' object\n");
+		exit(EXIT_FAILURE);
+	}
+	cJSON* vocab_object = cJSON_GetObjectItemCaseSensitive(tokenizer_config_json, "vocab");
+	if (vocab_object == NULL) {
+		fprintf(stderr, "unexpected error: 'tokenizer_config.json' doesn't have a 'model/vocab' object\n");
+		exit(EXIT_FAILURE);
+	}
+
+	cJSON_Delete(tokenizer_config_json);
+	fclose(file);
+}
+
+void tokenizer_encoder(ExecCtx* e_ctx, const char* input)
 {
 	char* normalized_input = NULL;
-	tokenizer_normalize(e_ctx, input, &normalized_input);
+	tokenizer_normalizer(e_ctx, input, &normalized_input);
 	printf("%s\n", normalized_input);
 	mem_arena_host_pop((HostArena*)e_ctx, strlen(normalized_input));
 }
