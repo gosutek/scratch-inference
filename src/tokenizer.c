@@ -147,6 +147,43 @@ static void tokenizer_parse_config(ExecCtx* const e_ctx)
 		exit(EXIT_FAILURE);
 	}
 
+	Vocab* vocab_map = NULL;
+	cJSON* vocab_item_json = vocab_object->child;
+	u64    vocab_items_bsize = 0;
+	u64    vocab_strings_bsize = 0;
+	while (vocab_item_json != NULL) {
+		Vocab* vocab_item_map = NULL;
+		if (mem_arena_host_push((HostArena*)e_ctx, sizeof *vocab_item_json, (void**)&vocab_item_map) != 1) {
+			fprintf(stderr, "failed to push to arena\n");
+			exit(EXIT_FAILURE);
+		}
+		vocab_items_bsize += sizeof *vocab_item_json;  // keep track of the bsize to pop at the end
+
+		if (mem_arena_host_push((HostArena*)e_ctx, strlen(vocab_item_json->string), (void**)&vocab_item_map->token) != 1) {
+			fprintf(stderr, "failed to push to arena\n");
+			exit(EXIT_FAILURE);
+		}
+		strcpy(vocab_item_map->token, vocab_item_json->string);
+		vocab_strings_bsize += strlen(vocab_item_json->string);  // keep track of the bsize to pop at the end
+
+		vocab_item_map->id = vocab_item_json->valueint;
+		HASH_ADD_KEYPTR(hh, vocab_map, vocab_item_map->token, strlen(vocab_item_map->token), vocab_item_map);
+		vocab_item_json = vocab_item_json->next;
+	}
+
+	Vocab* found;
+	HASH_FIND_STR(vocab_map, "ace", found);
+	if (found != NULL) {
+		printf("[ace]: %d\n", found->id);
+	}
+
+	Vocab *e, *tmp;
+	HASH_ITER(hh, vocab_map, e, tmp)
+	{
+		HASH_DEL(vocab_map, e);
+	}
+	mem_arena_host_pop((HostArena*)e_ctx, vocab_items_bsize + vocab_strings_bsize);
+
 	cJSON_Delete(tokenizer_config_json);
 }
 
