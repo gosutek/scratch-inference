@@ -48,7 +48,7 @@ static i32 get_file_bsize(const char* filepath, u64* const bsize)
 	return 0;
 }
 
-static void parse_model_config(ExecCtx* const e_ctx, Model* const model, const char* model_config_filepath)
+static void model_parse_config(ExecCtx* const e_ctx, Model* const model, const char* model_config_filepath)
 {
 	FILE* file = fopen(model_config_filepath, "r");
 	if (!file) {
@@ -75,6 +75,7 @@ static void parse_model_config(ExecCtx* const e_ctx, Model* const model, const c
 	cJSON* model_config = cJSON_Parse(json_buf);
 
 	mem_arena_host_pop((HostArena*)e_ctx, model_config_bsize + 1);
+	fclose(file);
 
 	model_config = model_config->child;
 	// TODO: Replace this with cJSON_GetObjectItemCaseSensitive
@@ -155,7 +156,7 @@ static void build_model(ExecCtx** const e_ctx, Model* const model, const char* m
 		exit(EXIT_FAILURE);
 	}
 
-	parse_model_config(*e_ctx, model, model_config_filepath);
+	model_parse_config(*e_ctx, model, model_config_filepath);
 	const u64 model_weight_bsize = sizeof **model->weights.wq * model->config.n_layers * 4;  // wq, wk, wv, wo = 4
 
 	if (mem_arena_host_push((HostArena*)(*e_ctx), model_weight_bsize, (void**)&model->weights.wq) != 1) {
@@ -280,7 +281,7 @@ static void build_model(ExecCtx** const e_ctx, Model* const model, const char* m
 	}
 	assert(dbg_counter == 600);
 
-	tokenizer_tokenize(*e_ctx, "Γειά σου κόσμε!");
+	tokenizer_encode(*e_ctx, "Γειά σου κόσμε!");
 
 	cJSON_Delete(header);
 	munmap(model_mmap, model->file_bsize);

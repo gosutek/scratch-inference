@@ -23,7 +23,6 @@ add_executable(inf
 
   src/cuda/api/cuda_allocator.cu
   src/cuda/api/cuda_mem_wrapper.cu
-  src/cuda/cuda_helpers.cuh
 )
 
 target_compile_options(inf PRIVATE

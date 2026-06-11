@@ -119,18 +119,21 @@ static void tokenizer_parse_config(ExecCtx* const e_ctx)
 		exit(EXIT_FAILURE);
 	}
 
-	if (fread((void*)json_buf, sizeof *json_buf, tokenizer_config_file_bsize, file) != tokenizer_config_file_bsize) {
-		fprintf(stderr, "failed to fread the tokenizer_config.json\n");
+	if (fread(json_buf, sizeof *json_buf, tokenizer_config_file_bsize, file) != tokenizer_config_file_bsize) {
+		fprintf(stderr, "failed to fread tokenizer.json\n");
 		exit(EXIT_FAILURE);
 	}
 
-	mem_arena_host_pop((HostArena*)e_ctx, tokenizer_config_file_bsize + 1);
+	json_buf[tokenizer_config_file_bsize] = '\0';
 
 	cJSON* tokenizer_config_json = cJSON_Parse(json_buf);
 	if (tokenizer_config_json == NULL) {
 		fprintf(stderr, "failed to cJSON_Parse 'tokenizer_confg.json\n");
 		exit(EXIT_FAILURE);
 	}
+
+	mem_arena_host_pop((HostArena*)e_ctx, tokenizer_config_file_bsize + 1);
+	fclose(file);
 
 	tokenizer_config_json = tokenizer_config_json->child;
 	cJSON* model_object = cJSON_GetObjectItemCaseSensitive(tokenizer_config_json, "model");
@@ -145,13 +148,13 @@ static void tokenizer_parse_config(ExecCtx* const e_ctx)
 	}
 
 	cJSON_Delete(tokenizer_config_json);
-	fclose(file);
 }
 
-void tokenizer_encoder(ExecCtx* e_ctx, const char* input)
+void tokenizer_encode(ExecCtx* e_ctx, const char* input)
 {
 	char* normalized_input = NULL;
 	tokenizer_normalizer(e_ctx, input, &normalized_input);
 	printf("%s\n", normalized_input);
 	mem_arena_host_pop((HostArena*)e_ctx, strlen(normalized_input));
+	tokenizer_parse_config(e_ctx);
 }
