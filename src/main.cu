@@ -281,7 +281,16 @@ static void build_model(ExecCtx** const e_ctx, Model* const model, const char* m
 	}
 	assert(dbg_counter == 600);
 
-	tokenizer_encode(*e_ctx, "Γειά σου κόσμε!");
+	Tokenizer tokenizer;
+	tokenizer_build(*e_ctx, &tokenizer, "gemma-4-E2B-it/tokenizer.json");
+
+	MergesMap* found;
+	HASH_FIND_STR(tokenizer.merges, "i st", found);
+	if (found) {
+		printf("%lu\n", found->rank);
+	}
+
+	tokenizer_destroy(&tokenizer);
 
 	cJSON_Delete(header);
 	munmap(model_mmap, model->file_bsize);

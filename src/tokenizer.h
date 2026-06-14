@@ -19,11 +19,19 @@ extern "C"
 
 	typedef struct MergesMap
 	{
-		char*          str_1;
-		char*          str_2;
+		char*          pair;
+		u64            rank;
 		UT_hash_handle hh;
 	} MergesMap;
 
+	typedef struct Tokenizer
+	{
+		VocabMap*  vocab;
+		MergesMap* merges;
+	} Tokenizer;
+
+	void tokenizer_build(ExecCtx* e_ctx, Tokenizer* tokenizer, const char* config_filepath);
+	void tokenizer_destroy(Tokenizer* tokenizer);
 	void tokenizer_encode(ExecCtx* e_ctx, const char* input);
 	void tokenizer_decode(ExecCtx* e_ctx, const char* input);
 

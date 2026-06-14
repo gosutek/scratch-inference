@@ -103,15 +103,24 @@ static void tokenizer_normalizer(ExecCtx* e_ctx, const char* input, char** outpu
 	*c = '\0';
 }
 
-static void tokenizer_parse_config(ExecCtx* const e_ctx)
+void tokenizer_encode(ExecCtx* e_ctx, const char* input)
 {
-	FILE* file = fopen("gemma-4-E2B-it/tokenizer.json", "rb");
+	char* normalized_input = NULL;
+	tokenizer_normalizer(e_ctx, input, &normalized_input);
+	printf("%s\n", normalized_input);
+	mem_arena_host_pop((HostArena*)e_ctx, strlen(normalized_input));
+	// tokenizer_parse_config(e_ctx);
+}
+
+void tokenizer_build(ExecCtx* e_ctx, Tokenizer* tokenizer, const char* config_filepath)
+{
+	FILE* file = fopen(config_filepath, "rb");
 	if (!file) {
-		fprintf(stderr, "failed to open 'gemma-4-E2B-it/tokenizer.json'\n");
+		fprintf(stderr, "failed to open %s\n", config_filepath);
 		exit(EXIT_FAILURE);
 	}
 	u64 tokenizer_config_file_bsize = 0;
-	get_file_bsize("gemma-4-E2B-it/tokenizer.json", &tokenizer_config_file_bsize);
+	get_file_bsize(config_filepath, &tokenizer_config_file_bsize);
 
 	char* json_buf = NULL;
 	if (mem_arena_host_push((HostArena*)e_ctx, tokenizer_config_file_bsize + 1, (void**)&json_buf) != 1) {
@@ -146,80 +155,66 @@ static void tokenizer_parse_config(ExecCtx* const e_ctx)
 		exit(EXIT_FAILURE);
 	}
 
-	VocabMap* vocab_map = NULL;
-	cJSON*    vocab_item_json = vocab_object->child;
-	u64       vocab_items_bsize = 0;
-	u64       vocab_strings_bsize = 0;
+	cJSON* vocab_item_json = vocab_object->child;
 	while (vocab_item_json != NULL) {
 		VocabMap* vocab_item_map = NULL;
 		if (mem_arena_host_push((HostArena*)e_ctx, sizeof *vocab_item_map, (void**)&vocab_item_map) != 1) {
 			fprintf(stderr, "failed to push to arena\n");
 			exit(EXIT_FAILURE);
 		}
-		vocab_items_bsize += sizeof *vocab_item_map;  // keep track of the bsize to pop at the end
 
 		if (mem_arena_host_push((HostArena*)e_ctx, strlen(vocab_item_json->string), (void**)&vocab_item_map->token) != 1) {
 			fprintf(stderr, "failed to push to arena\n");
 			exit(EXIT_FAILURE);
 		}
 		strcpy(vocab_item_map->token, vocab_item_json->string);
-		vocab_strings_bsize += strlen(vocab_item_json->string);  // keep track of the bsize to pop at the end
 
 		vocab_item_map->id = vocab_item_json->valueint;
-		HASH_ADD_KEYPTR(hh, vocab_map, vocab_item_map->token, strlen(vocab_item_map->token), vocab_item_map);
+		HASH_ADD_KEYPTR(hh, tokenizer->vocab, vocab_item_map->token, strlen(vocab_item_map->token), vocab_item_map);
 		vocab_item_json = vocab_item_json->next;
 	}
 
-	MergesMap* merges_map = NULL;
-	cJSON*     merges_item_json = cJSON_GetObjectItemCaseSensitive(tokenizer_config_json, "merges");
-	if (merges_item_json == NULL || !cJSON_IsArray(merges_item_json)) {
+	cJSON* merges_object = cJSON_GetObjectItemCaseSensitive(model_object, "merges");
+	if (merges_object == NULL || !cJSON_IsArray(merges_object)) {
 		fprintf(stderr, "unexpected error: 'tokenizer_config.json' doesn't have a 'merges' object\n");
 		exit(EXIT_FAILURE);
 	}
-	u64    merges_items_bsize = 0;
-	u64    merges_strings_bsize = 0;
-	cJSON* merge_item = NULL;
-	cJSON_ArrayForEach(merge_item, merges_item_json)
+	cJSON* merge_item_json = NULL;
+	u64    priority_rank = 0;
+	cJSON_ArrayForEach(merge_item_json, merges_object)
 	{
 		MergesMap* merges_item_map = NULL;
 		if (mem_arena_host_push((HostArena*)e_ctx, sizeof *merges_item_map, (void**)&merges_item_map) != 1) {
 			fprintf(stderr, "failed to push to arena\n");
 			exit(EXIT_FAILURE);
 		}
-		merges_items_bsize += sizeof *merges_item_map;
-		cJSON* left = cJSON_GetArrayItem(merge_item, 0);
-		cJSON* right = cJSON_GetArrayItem(merge_item, 1);
+		cJSON* left = cJSON_GetArrayItem(merge_item_json, 0);
+		cJSON* right = cJSON_GetArrayItem(merge_item_json, 1);
 
-		if (mem_arena_host_push((HostArena*)e_ctx, strlen(left->string), (void**)&merges_item_map->str_1) != 1) {
+		u64 pair_len = strlen(left->valuestring) + strlen(right->valuestring) + 1 + 1;  // ' ' + '\0'
+		if (mem_arena_host_push((HostArena*)e_ctx, pair_len, (void**)&merges_item_map->pair) != 1) {
 			fprintf(stderr, "failed to push to arena\n");
 			exit(EXIT_FAILURE);
 		}
-		strcpy(merges_item_map->str_1, left->string);
-		merges_strings_bsize += strlen(left->string);
-
-		if (mem_arena_host_push((HostArena*)e_ctx, strlen(right->string), (void**)&merges_item_map->str_2) != 1) {
-			fprintf(stderr, "failed to push to arena\n");
-			exit(EXIT_FAILURE);
-		}
-		strcpy(merges_item_map->str_2, right->string);
-		merges_strings_bsize += strlen(right->string);
+		snprintf(merges_item_map->pair, pair_len, "%s %s", left->valuestring, right->valuestring);
+		merges_item_map->rank = priority_rank++;
+		HASH_ADD_KEYPTR(hh, tokenizer->merges, merges_item_map->pair, strlen(merges_item_map->pair), merges_item_map);
 	}
-
-	VocabMap *e, *tmp;
-	HASH_ITER(hh, vocab_map, e, tmp)
-	{
-		HASH_DEL(vocab_map, e);
-	}
-	mem_arena_host_pop((HostArena*)e_ctx, vocab_items_bsize + vocab_strings_bsize);
 
 	cJSON_Delete(tokenizer_config_json);
 }
 
-void tokenizer_encode(ExecCtx* e_ctx, const char* input)
+void tokenizer_destroy(Tokenizer* tokenizer)
 {
-	char* normalized_input = NULL;
-	tokenizer_normalizer(e_ctx, input, &normalized_input);
-	printf("%s\n", normalized_input);
-	mem_arena_host_pop((HostArena*)e_ctx, strlen(normalized_input));
-	tokenizer_parse_config(e_ctx);
+	VocabMap *vocab_item, *vocab_tmp;
+	HASH_ITER(hh, tokenizer->vocab, vocab_item, vocab_tmp)
+	{
+		HASH_DEL(tokenizer->vocab, vocab_item);
+	}
+
+	MergesMap *merges_item, *merges_tmp;
+	HASH_ITER(hh, tokenizer->merges, merges_item, merges_tmp)
+	{
+		HASH_DEL(tokenizer->merges, merges_item);
+	}
 }
