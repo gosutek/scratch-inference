@@ -1,3 +1,4 @@
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -105,50 +106,97 @@ static void tokenizer_normalizer(ExecCtx* e_ctx, const char* input, char** outpu
 
 void tokenizer_encode(ExecCtx* e_ctx, const Tokenizer* const tokenizer, const char* input)
 {
-	char** token_array = NULL;
-	if (mem_arena_host_push((HostArena*)e_ctx, strlen(input) * sizeof(char*), (void**)&token_array) != 1) {  // worst case, nothing will merged and we need a pointer for each character
-		fprintf(stderr, "failed to push to arena\n");
-		exit(EXIT_FAILURE);
-	}
+	char**      buf = NULL;
+	const char* uni_underscore = "▁";
+	const u64   uni_underscore_bsize = strlen(uni_underscore);
 
 	const char* p = input;
-	u32         token_idx = 0;
+	u32         n_words = 0;
 	while (*p != '\0') {
-		const char* word_start = p;
-		const b32   is_first = (p == input);
+		const char* l = p;
 		u64         word_len = 0;
+		u64         loop_allocation_bsize = 0;
 
 		while (*p != ' ' && *p != '\0') {
 			++word_len;
 			++p;
+		}  // p is now on the whitespace
+
+		b32 is_first = (l == input);
+		if (!is_first) {
+			++word_len;  // account for the added "▁"
 		}
 
-		u64 alloc_len = word_len + (is_first ? 0 : strlen("▁")) + 1;
-
-		if (mem_arena_host_push((HostArena*)e_ctx, alloc_len, (void**)&token_array[token_idx]) != 1) {
+		if (mem_arena_host_push((HostArena*)e_ctx, word_len * sizeof(char*), (void**)&buf) != 1) {
 			fprintf(stderr, "failed to push to arena\n");
 			exit(EXIT_FAILURE);
 		}
+		loop_allocation_bsize += word_len * sizeof(char*);
 
+		u32 char_idx = 0;
 		if (!is_first) {
-			snprintf(token_array[token_idx], alloc_len, "▁%.*s", (i32)word_len, word_start);
-		} else {
-			snprintf(token_array[token_idx], alloc_len, "%.*s", (i32)word_len, word_start);
+			if (mem_arena_host_push((HostArena*)e_ctx, uni_underscore_bsize + 1, (void**)&buf[char_idx]) != 1) {
+				fprintf(stderr, "failed to push to arena\n");
+				exit(EXIT_FAILURE);
+			}
+			loop_allocation_bsize += uni_underscore_bsize + 1;
+			strcpy(buf[char_idx], uni_underscore);
+			++char_idx;
 		}
-		++token_idx;
 
-		if (*p == ' ')
+		while (l < p)  // every char before the whitespace of p
+		{
+			const u32 char_len = utf8_byte_count(l);
+			if (mem_arena_host_push((HostArena*)e_ctx, char_len + 1, (void**)&buf[char_idx]) != 1) {
+				fprintf(stderr, "failed to push to arena\n");
+				exit(EXIT_FAILURE);
+			}
+			loop_allocation_bsize += char_len + 1;
+			memcpy(buf[char_idx], l, char_len);
+			buf[char_idx][char_len] = '\0';
+
+			++char_idx;
+			l += char_len;
+		}
+		++n_words;
+		if (*p == ' ') {
 			++p;
-	}
+		}
 
-	for (u32 i = 0; i < token_idx; ++i) {
-		char* w = token_array[i];
-		printf("%s\n", w);
+		// BPE LOOP
+		char* pair_buf = NULL;
+		if (mem_arena_host_push((HostArena*)e_ctx, tokenizer->max_token_length, (void**)&pair_buf) != 1) {
+			fprintf(stderr, "failed to push to arena\n");
+			exit(EXIT_FAILURE);
+		}
+		loop_allocation_bsize += tokenizer->max_token_length;
+
+		u64 min_rank = UINT_MAX;
+		u32 min_rank_idx = 0;
+		for (u32 i = 0; i < char_idx - 1; ++i) {
+			char* p1 = buf[i];
+			char* p2 = buf[i + 1];
+
+			sprintf(pair_buf, "%s %s", p1, p2);
+
+			MergesMap* found_merge = NULL;
+			HASH_FIND_STR(tokenizer->merges, pair_buf, found_merge);
+			if (found_merge == NULL) {
+				continue;
+			}
+			if (min_rank > found_merge->rank) {
+				min_rank = found_merge->rank;
+				min_rank_idx = i;
+			}
+		}
+
+		mem_arena_host_pop((HostArena*)e_ctx, loop_allocation_bsize);
 	}
 }
 
 void tokenizer_build(ExecCtx* e_ctx, Tokenizer* tokenizer, const char* config_filepath)
 {
+	tokenizer->max_token_length = 0;
 	FILE* file = fopen(config_filepath, "rb");
 	if (!file) {
 		fprintf(stderr, "failed to open %s\n", config_filepath);
@@ -192,13 +240,16 @@ void tokenizer_build(ExecCtx* e_ctx, Tokenizer* tokenizer, const char* config_fi
 
 	cJSON* vocab_item_json = vocab_object->child;
 	while (vocab_item_json != NULL) {
+		const u64 vocab_item_str_len = strlen(vocab_item_json->string);
 		VocabMap* vocab_item_map = NULL;
+		// TODO: Make these into a macro
 		if (mem_arena_host_push((HostArena*)e_ctx, sizeof *vocab_item_map, (void**)&vocab_item_map) != 1) {
 			fprintf(stderr, "failed to push to arena\n");
 			exit(EXIT_FAILURE);
 		}
 
-		if (mem_arena_host_push((HostArena*)e_ctx, strlen(vocab_item_json->string), (void**)&vocab_item_map->token) != 1) {
+		tokenizer->max_token_length = MAX(vocab_item_str_len, tokenizer->max_token_length);
+		if (mem_arena_host_push((HostArena*)e_ctx, vocab_item_str_len, (void**)&vocab_item_map->token) != 1) {
 			fprintf(stderr, "failed to push to arena\n");
 			exit(EXIT_FAILURE);
 		}

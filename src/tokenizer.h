@@ -28,6 +28,8 @@ extern "C"
 	{
 		VocabMap*  vocab;
 		MergesMap* merges;
+
+		u64 max_token_length;
 	} Tokenizer;
 
 	void tokenizer_build(ExecCtx* e_ctx, Tokenizer* tokenizer, const char* config_filepath);
