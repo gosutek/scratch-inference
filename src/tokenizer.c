@@ -7,6 +7,7 @@
 
 #include <helpers.h>
 #include <tokenizer.h>
+#include <unistd.h>
 
 // TODO: This is a duplicate with the one in main.cu
 static i32 get_file_bsize(const char* filepath, u64* const bsize)
@@ -171,23 +172,67 @@ void tokenizer_encode(ExecCtx* e_ctx, const Tokenizer* const tokenizer, const ch
 		}
 		loop_allocation_bsize += tokenizer->max_token_length;
 
-		u64 min_rank = UINT_MAX;
-		u32 min_rank_idx = 0;
-		for (u32 i = 0; i < char_idx - 1; ++i) {
-			char* p1 = buf[i];
-			char* p2 = buf[i + 1];
+		while (1) {
+			u64 min_rank = UINT64_MAX;
+			for (u32 i = 0; i < char_idx - 1; ++i) {
+				char* p1 = buf[i];
+				char* p2 = buf[i + 1];
 
-			sprintf(pair_buf, "%s %s", p1, p2);
+				sprintf(pair_buf, "%s %s", p1, p2);
 
-			MergesMap* found_merge = NULL;
-			HASH_FIND_STR(tokenizer->merges, pair_buf, found_merge);
-			if (found_merge == NULL) {
-				continue;
+				MergesMap* found_merge = NULL;
+				HASH_FIND_STR(tokenizer->merges, pair_buf, found_merge);
+				if (found_merge && min_rank >= found_merge->rank) {
+					min_rank = found_merge->rank;
+				}
 			}
-			if (min_rank > found_merge->rank) {
-				min_rank = found_merge->rank;
-				min_rank_idx = i;
+
+			if (min_rank == UINT64_MAX) {
+				break;
 			}
+
+			u32 read_idx = 0;
+			u32 write_idx = 0;
+
+			while (read_idx < char_idx)  // I plan to read every character
+			{
+				if (read_idx < char_idx - 1)  // The code inside this 'if' is for pairs only. The outer while handles all characters
+				{
+					// So, if we got a pair
+					// 1. is it of minimum rank?
+					// 2. If YES then construct the concatenated string
+					// 2.1 The buffer 'buf' at the index of the first member of the pair will point to that new string.
+					// 2.2 We must now read the next character. However, the next character on i + 2 cause we merged i and i + 1.
+					// 2.3 The next write must occur on i + 1 as the character on that potition got merged with the previous character and on the next loop we must consider the merged pair with the i + 2'th character.
+					// 3. If NO then just move both the write and read ptr's to the next character.
+
+					MergesMap* found_merge = NULL;
+					sprintf(pair_buf, "%s %s", buf[read_idx], buf[read_idx + 1]);
+					HASH_FIND_STR(tokenizer->merges, pair_buf, found_merge);
+					if (found_merge == NULL || found_merge->rank > min_rank) {
+						buf[write_idx++] = buf[read_idx++];
+						continue;
+					}
+					char* merge = NULL;
+					u64   merge_allocation_bsize = strlen(buf[read_idx]) + strlen(buf[read_idx + 1]) + 1;
+					if (mem_arena_host_push((HostArena*)e_ctx, merge_allocation_bsize, (void**)&merge) != 1) {
+						fprintf(stderr, "failed to push to arena\n");
+						exit(EXIT_FAILURE);
+					}
+					loop_allocation_bsize += merge_allocation_bsize;
+					strcpy(merge, buf[read_idx]);
+					strcat(merge, buf[read_idx + 1]);
+					buf[write_idx++] = merge;
+					read_idx += 2;
+					continue;
+				}
+				char_idx = write_idx;
+				buf[write_idx++] = buf[read_idx++];
+			}
+		}
+
+		for (u32 i = 0; i < char_idx; ++i) {
+			printf("%s\n", buf[i]);
 		}
 
 		mem_arena_host_pop((HostArena*)e_ctx, loop_allocation_bsize);
