@@ -116,6 +116,9 @@ void tokenizer_encode(ExecCtx* e_ctx, const Tokenizer* const tokenizer, const ch
 	const char* p = input;
 	u32         n_words = 0;
 	while (*p != '\0') {
+#if !defined(NDEBUG)
+		printf("Outer Loop: %u\n", n_words + 1);
+#endif
 		const char* l = p;
 		u64         word_len = 0;
 		u64         loop_allocation_bsize = 0;
@@ -228,16 +231,18 @@ void tokenizer_encode(ExecCtx* e_ctx, const Tokenizer* const tokenizer, const ch
 					read_idx += 2;
 					continue;
 				}
-				char_idx = write_idx + 1;
 				buf[write_idx++] = buf[read_idx++];
 			}
+			char_idx = write_idx;
 		}
 
 		for (u32 i = 0; i < char_idx; ++i) {
 			VocabMap* found_vocab = NULL;
 			HASH_FIND_STR(tokenizer->vocab, buf[i], found_vocab);
 			if (found_vocab != NULL) {
+#if !defined(NDEBUG)
 				printf("[%d] %s\n", found_vocab->id, buf[i]);
+#endif
 			}
 		}
 
