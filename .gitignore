@@ -4,6 +4,7 @@
 *.ptx
 *.cubin
 *.fatbin
+*.log
 
 compile_commands.json
 CMakeCache.txt

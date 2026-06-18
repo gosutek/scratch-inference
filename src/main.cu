@@ -72,12 +72,12 @@ static void model_parse_config(ExecCtx* const e_ctx, Model* const model, const c
 
 	json_buf[model_config_bsize] = '\0';  // cJSON works on null-terminated strings
 
-	cJSON* model_config = cJSON_Parse(json_buf);
+	cJSON* model_config_root = cJSON_Parse(json_buf);
 
 	mem_arena_host_pop((HostArena*)e_ctx, model_config_bsize + 1);
 	fclose(file);
 
-	model_config = model_config->child;
+	cJSON* model_config = model_config_root->child;
 	// TODO: Replace this with cJSON_GetObjectItemCaseSensitive
 	while (strcmp(model_config->string, "text_config") != 0) {
 		model_config = model_config->next;
@@ -89,7 +89,7 @@ static void model_parse_config(ExecCtx* const e_ctx, Model* const model, const c
 	model->config.vocab_size = cJSON_GetObjectItem(model_config, "vocab_size")->valueint;
 	model->config.n_layers = cJSON_GetObjectItem(model_config, "num_hidden_layers")->valueint;
 
-	cJSON_Delete(model_config);
+	cJSON_Delete(model_config_root);
 	return;
 }
 
@@ -167,8 +167,8 @@ static void build_model(ExecCtx** const e_ctx, Model* const model, const char* m
 	model->weights.wv = (bf16**)((u8*)model->weights.wk + model_weight_bsize / 4);
 	model->weights.wo = (bf16**)((u8*)model->weights.wv + model_weight_bsize / 4);
 
-	cJSON* header = NULL;
-	if (parse_model_header(*e_ctx, model, file, &header) != 1) {
+	cJSON* header_root = NULL;
+	if (parse_model_header(*e_ctx, model, file, &header_root) != 1) {
 		fprintf(stderr, "failed to parse model header\n");
 		exit(EXIT_FAILURE);
 	}
@@ -180,7 +180,7 @@ static void build_model(ExecCtx** const e_ctx, Model* const model, const char* m
 	u64    lm_offset_start = UINT64_MAX;
 	u64    lm_offset_end = 0;
 
-	header = header->child;
+	cJSON* header = header_root->child;
 	for (cJSON* node = header; node != NULL; node = node->next) {
 		if (strlen(node->string) < TENSOR_FILTER_LEN || strncmp(node->string, TENSOR_FILTER, TENSOR_FILTER_LEN) != 0) {
 			continue;
@@ -244,6 +244,8 @@ static void build_model(ExecCtx** const e_ctx, Model* const model, const char* m
       * 5. model.language_model.per_layer_projection_norm.weight
       */
 
+		// NOTE: This addition pushes p into uninitialised memory territory
+		// for the above 5 string exceptions. Should be fine since they will never match in the 'strcmp'
 		const char* p = node->string + PREFIX_LEN;
 		u32         layer = atoi(p);
 		while (*p && *p != '.') ++p;  // reach '.'
@@ -284,8 +286,8 @@ static void build_model(ExecCtx** const e_ctx, Model* const model, const char* m
 	Tokenizer tokenizer;
 	tokenizer_build(*e_ctx, &tokenizer, "gemma-4-E2B-it/tokenizer.json");
 	tokenizer_encode(*e_ctx, &tokenizer, "Hello, World!");
-	// tokenizer_encode(*e_ctx, &tokenizer, "Lorem ipsum dolor sit amet.");
-	// tokenizer_encode(*e_ctx, &tokenizer, "Γειά, Κόσμε!");
+	tokenizer_encode(*e_ctx, &tokenizer, "Lorem ipsum dolor sit amet.");
+	tokenizer_encode(*e_ctx, &tokenizer, "Γειά, Κόσμε!");
 	// MergesMap* found;
 	// HASH_FIND_STR(tokenizer.merges, "i st", found);
 	// if (found) {
@@ -294,7 +296,7 @@ static void build_model(ExecCtx** const e_ctx, Model* const model, const char* m
 
 	tokenizer_destroy(&tokenizer);
 
-	cJSON_Delete(header);
+	cJSON_Delete(header_root);
 	munmap(model_mmap, model->file_bsize);
 	fclose(file);
 	if (exec_ctx_destroy(e_ctx) != 1) {
