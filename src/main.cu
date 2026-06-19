@@ -133,7 +133,7 @@ static i32 parse_model_header(ExecCtx* const e_ctx, Model* const model, FILE* co
 	return 1;
 }
 
-static void build_model(ExecCtx** const e_ctx, Model* const model, const char* model_filepath, const char* model_config_filepath)
+static void model_build(ExecCtx** const e_ctx, Model* const model, const char* model_filepath, const char* model_config_filepath)
 {
 	if (get_file_bsize(model_filepath, &model->file_bsize) != 1) {
 		fprintf(stderr, "couldn't read file size of %s\n", model_filepath);
@@ -283,27 +283,21 @@ static void build_model(ExecCtx** const e_ctx, Model* const model, const char* m
 	}
 	assert(dbg_counter == 600);
 
-	Tokenizer tokenizer;
-	tokenizer_build(*e_ctx, &tokenizer, "gemma-4-E2B-it/tokenizer.json");
-	// tokenizer_encode(*e_ctx, &tokenizer, "Hello, World!");
-	tokenizer_encode(*e_ctx, &tokenizer, "Lorem ipsum dolor sit amet.");
-	// tokenizer_encode(*e_ctx, &tokenizer, "Γειά, Κόσμε!");
-	// MergesMap* found;
-	// HASH_FIND_STR(tokenizer.merges, "i st", found);
-	// if (found) {
-	// 	printf("%lu\n", found->rank);
-	// }
-
-	tokenizer_destroy(&tokenizer);
+	tokenizer_build(*e_ctx, &model->tokenizer, "gemma-4-E2B-it/tokenizer.json");
 
 	cJSON_Delete(header_root);
 	munmap(model_mmap, model->file_bsize);
 	fclose(file);
+	return;
+}
+
+static void model_destroy(ExecCtx** e_ctx, Model* model)
+{
+	tokenizer_destroy(&model->tokenizer);
 	if (exec_ctx_destroy(e_ctx) != 1) {
 		fprintf(stderr, "failed to destroy ctx\n");
 		exit(EXIT_FAILURE);
 	}
-	return;
 }
 
 int main(void)
@@ -312,8 +306,12 @@ int main(void)
 	const char* model_config_filepath = "gemma-4-E2B-it/config.json";
 
 	ExecCtx* e_ctx = NULL;
-	Model    model;
-	build_model(&e_ctx, &model, model_filepath, model_config_filepath);
+	Model    model = { 0 };
+	model_build(&e_ctx, &model, model_filepath, model_config_filepath);
+
+	tokenizer_encode(e_ctx, &model.tokenizer, "Hello, World!");
+
+	model_destroy(&e_ctx, &model);
 
 #ifndef NDEBUG
 	if (e_ctx) {

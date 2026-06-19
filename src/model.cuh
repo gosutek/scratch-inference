@@ -2,6 +2,7 @@
 
 #include "cuda_helpers.cuh"
 #include "helpers.h"
+#include "tokenizer.h"
 
 typedef struct Config
 {
@@ -59,9 +60,10 @@ typedef struct Weights
 
 typedef struct Model
 {
-	Config  config;
-	Weights weights;
-	bf16*   data;
+	Config    config;
+	Weights   weights;
+	bf16*     data;
+	Tokenizer tokenizer;
 
 	i32 fd;
 
