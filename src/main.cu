@@ -21,7 +21,22 @@
 
 const u32 MAX_SEQ_LEN = 512;
 
-static Error_t correctness_weight_ptr_partition(ExecCtx* e_ctx, const bf16* const d_ptr, const bf16* const h_ptr, i32 n)
+static Error_t print_dev_buf(ExecCtx* const e_ctx, bf16* src, const u64 bsize)
+{
+	bf16*     dst = NULL;
+	const u64 size = bsize / sizeof *dst;
+	CHECK_ERROR(arena_host_push((HostArena*)e_ctx, bsize, (void**)&dst));
+	CHECK_ERROR(cu_memcpy_dth(dst, src, bsize));
+
+	for (u32 i = 0; i < size; ++i) {
+		printf("%.2f\n", (f32)dst[i]);
+	}
+
+	arena_host_pop((HostArena*)e_ctx, bsize);
+	return Success;
+}
+
+static Error_t correctness_weight_ptr_partition(ExecCtx* const e_ctx, const bf16* const d_ptr, const bf16* const h_ptr, i32 n)
 {
 	bf16* h_buf = NULL;
 	CHECK_ERROR(arena_host_push((HostArena*)e_ctx, n * sizeof *d_ptr, (void**)&h_buf));

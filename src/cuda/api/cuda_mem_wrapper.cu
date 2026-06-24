@@ -42,13 +42,13 @@ extern "C"
 		return 1;
 	}
 
-	b32 cu_memcpy_dth(void* dst, const void* src, const u64 bsize)
+	Error_t cu_memcpy_dth(void* dst, const void* src, const u64 bsize)
 	{
 		if (!_is_dev_ptr(src)) {
-			return 0;
+			return ErrorInvalidHostPtr;
 		}
 		CHECK_CUDA(cudaMemcpy(dst, src, bsize, cudaMemcpyDeviceToHost));
-		return 1;
+		return Success;
 	}
 
 	b32 cu_host_register_read_only(void* ptr, const u64 bsize)
