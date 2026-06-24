@@ -36,6 +36,22 @@ static Error_t print_dev_buf(ExecCtx* const e_ctx, bf16* src, const u64 bsize)
 	return Success;
 }
 
+static void print_dev_props()
+{
+	cudaDeviceProp dev_prop = {};
+	CHECK_CUDA(cudaGetDeviceProperties(&dev_prop, 0));
+
+	printf(
+		"- Name %s\n- SM count %d\n- Total global memory %lu MB\n- L2 cache size %lu MB\n- cc %d.%d\n"
+		"- Shared memory per block %lu KB\n- Shared memory per SM %lu KB\n- Constant memory %lu KB\n- Warp size %d\n"
+		"- Max threads per SM %d\n- Max threads per block %d\n- Max block dimensions [%d %d %d]\n- Max grid dimensions [%d %d %d]\n"
+		"- Max regs per block %d\n- Max regs per SM %d\n",
+		dev_prop.name, dev_prop.multiProcessorCount, (u64)(dev_prop.totalGlobalMem / 1e6), (u64)(dev_prop.l2CacheSize / 1e6),
+		dev_prop.major, dev_prop.minor, (u64)(dev_prop.sharedMemPerBlock / 1e3), (u64)(dev_prop.sharedMemPerMultiprocessor / 1e3), (u64)(dev_prop.totalConstMem / 1e3),
+		dev_prop.warpSize, dev_prop.maxThreadsPerMultiProcessor, dev_prop.maxThreadsPerBlock, dev_prop.maxThreadsDim[0], dev_prop.maxThreadsDim[1], dev_prop.maxThreadsDim[2],
+		dev_prop.maxGridSize[0], dev_prop.maxGridSize[1], dev_prop.maxGridSize[2], dev_prop.regsPerBlock, dev_prop.regsPerMultiprocessor);
+}
+
 static Error_t correctness_weight_ptr_partition(ExecCtx* const e_ctx, const bf16* const d_ptr, const bf16* const h_ptr, i32 n)
 {
 	bf16* h_buf = NULL;
@@ -293,6 +309,7 @@ static void model_destroy(ExecCtx** e_ctx, Model* model)
 
 int main(void)
 {
+	print_dev_props();
 	const char* model_filepath = "gemma-4-E2B-it/model.safetensors";
 	const char* model_config_filepath = "gemma-4-E2B-it/config.json";
 
