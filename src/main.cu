@@ -28,9 +28,13 @@ static Error_t print_dev_buf(ExecCtx* const e_ctx, bf16* src, const u64 bsize)
 	CHECK_ERROR(arena_host_push((HostArena*)e_ctx, bsize, (void**)&dst));
 	CHECK_ERROR(cu_memcpy_dth(dst, src, bsize));
 
-	for (u32 i = 0; i < size; ++i) {
+	const u32 n_iter = size > 5 ? 5 : size;
+
+	printf("|----------------------------------------------------|\n");
+	for (u32 i = 0; i < n_iter; ++i) {
 		printf("%.2f\n", (f32)dst[i]);
 	}
+	printf("|----------------------------------------------------|\n");
 
 	arena_host_pop((HostArena*)e_ctx, bsize);
 	return Success;
@@ -309,7 +313,10 @@ static void model_destroy(ExecCtx** e_ctx, Model* model)
 
 int main(void)
 {
-	print_dev_props();
+	// print_dev_props();
+	cudaDeviceProp dev_prop = {};
+	CHECK_CUDA(cudaGetDeviceProperties(&dev_prop, 0));
+
 	const char* model_filepath = "gemma-4-E2B-it/model.safetensors";
 	const char* model_config_filepath = "gemma-4-E2B-it/config.json";
 
@@ -322,10 +329,10 @@ int main(void)
 	u64  pop_pos = 0;
 	tokenizer_encode(e_ctx, &model.tokenizer, "Hello, World!", &_h_input_tokens, &input_tokens_len, &pop_pos);
 
-	// Do this allcoation first
+	// Do this allocation first
 	bf16*     _d_input_embeddings = NULL;
-	const u64 input_embeddings_len = input_tokens_len * model.config.dim * sizeof *_d_input_embeddings;
-	CHECK_ERROR(arena_dev_push(&e_ctx->dev_arena, input_embeddings_len, (void**)&_d_input_embeddings));
+	const u64 input_embeddings_bsize = input_tokens_len * model.config.dim * sizeof *_d_input_embeddings;
+	CHECK_ERROR(arena_dev_push(&e_ctx->dev_arena, input_embeddings_bsize, (void**)&_d_input_embeddings));
 
 	// So that we can pop this allocation
 	const u64 input_tokens_bsize = input_tokens_len * sizeof *_h_input_tokens;
@@ -334,9 +341,17 @@ int main(void)
 	CHECK_ERROR(cu_memcpy_htd(_d_input_tokens, _h_input_tokens, input_tokens_bsize));
 	arena_host_pop_at((HostArena*)e_ctx, pop_pos);
 
+	const u32  stride = 4;
+	const dim3 block_size = model.config.dim / stride;  // 1 thread per 4 elements
+	if (block_size.x > dev_prop.maxThreadsPerBlock) {
+		fprintf(stderr, "threads launched for k_fetch_input_embeddings exceeds max number of threads per block for this device\n");
+		exit(EXIT_FAILURE);
+	}
+	const dim3 grid_size = input_tokens_len;  // one block per token
 	// Consult Max Threads per Block : Because model.config.dim > Max Threads per block for 4070
-	k_fetch_input_embeddings<<<input_tokens_len, model.config.dim>>>(_d_input_tokens, input_tokens_len, model.weights.token_embedding_table, _d_input_embeddings);
+	k_fetch_input_embeddings<<<grid_size, block_size>>>(_d_input_tokens, input_tokens_len, model.config.dim, model.weights.token_embedding_table, _d_input_embeddings, stride);
 	cudaDeviceSynchronize();
+	print_dev_buf(e_ctx, _d_input_embeddings, input_embeddings_bsize);
 	arena_dev_pop(&e_ctx->dev_arena, input_tokens_bsize);
 
 	model_destroy(&e_ctx, &model);

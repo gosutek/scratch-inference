@@ -32,22 +32,22 @@ __device__ inline u8 align(const void* base, const void* addr, const size_t alig
 	return reinterpret_cast<uintptr_t>(base) + aligned_offset;
 }
 
-__device__ inline f32 _d_dn_rm_get(const f32* const a, u32 n_cols, u32 row, u32 col)
+__device__ inline bf16 _d_dn_rm_get(const bf16* const a, u32 n_cols, u32 row, u32 col)
 {
 	return a[row * n_cols + col];
 }
 
-__device__ inline f32 _d_dn_cm_get(const f32* const a, u32 n_rows, u32 row, u32 col)
+__device__ inline bf16 _d_dn_cm_get(const bf16* const a, u32 n_rows, u32 row, u32 col)
 {
 	return a[col * n_rows + row];
 }
 
-__device__ inline void _d_dn_rm_set(f32* const a, u32 n_cols, u32 row, u32 col, f32 val)
+__device__ inline void _d_dn_rm_set(bf16* const a, u32 n_cols, u32 row, u32 col, bf16 val)
 {
 	a[row * n_cols + col] = val;
 }
 
-__device__ inline void _d_dn_cm_set(f32* const a, u32 n_rows, u32 row, u32 col, f32 val)
+__device__ inline void _d_dn_cm_set(bf16* const a, u32 n_rows, u32 row, u32 col, bf16 val)
 {
 	a[col * n_rows + row] = val;
 }
