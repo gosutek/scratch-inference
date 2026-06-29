@@ -22,7 +22,26 @@
 
 const u32 MAX_SEQ_LEN = 512;
 
-static Error_t print_dev_buf(ExecCtx* const e_ctx, bf16* src, const u64 bsize)
+static Error_t print_dev_buf_u32(ExecCtx* const e_ctx, u32* src, const u64 bsize)
+{
+	u32*      dst = NULL;
+	const u64 size = bsize / sizeof *dst;
+	CHECK_ERROR(arena_host_push((HostArena*)e_ctx, bsize, (void**)&dst));
+	CHECK_ERROR(cu_memcpy_dth(dst, src, bsize));
+
+	const u32 n_iter = size > 5 ? 5 : size;
+
+	printf("|----------------------------------------------------|\n");
+	for (u32 i = 0; i < n_iter; ++i) {
+		printf("%u\n", dst[i]);
+	}
+	printf("|----------------------------------------------------|\n");
+
+	arena_host_pop((HostArena*)e_ctx, bsize);
+	return Success;
+}
+
+static Error_t print_dev_buf_bf16(ExecCtx* const e_ctx, bf16* src, const u64 bsize)
 {
 	bf16*     dst = NULL;
 	const u64 size = bsize / sizeof *dst;
@@ -39,6 +58,18 @@ static Error_t print_dev_buf(ExecCtx* const e_ctx, bf16* src, const u64 bsize)
 
 	arena_host_pop((HostArena*)e_ctx, bsize);
 	return Success;
+}
+
+static void print_model_config(const Model* const model)
+{
+	printf(
+		"dim: %u\n"
+		"ffn_dim: %u\n"
+		"global_head_dim: %u\n"
+		"n_heads: %u\n"
+		"vocab_size: %u\n"
+		"n_layers: %u\n",
+		model->config.dim, model->config.ffn_dim, model->config.global_head_dim, model->config.n_heads, model->config.vocab_size, model->config.n_layers);
 }
 
 static void print_dev_props()
@@ -240,9 +271,9 @@ static void model_build(ExecCtx** const e_ctx, Model* const model, const char* m
 	cu_memcpy_htd((void*)model->data, model_mmap, model->model_bsize);
 	printf("Tranfer complete\n");
 
-#ifndef NDEBUG
-	i32 dbg_counter = 0;
-#endif
+	// #ifndef NDEBUG
+	// 	i32 dbg_counter = 0; // this fails for different model weights :)
+	// #endif
 
 #ifndef NDEBUG
 	if (strcmp("model.language_model.embed_tokens.weight", first_lm_node->string) != 0) {
@@ -304,12 +335,7 @@ static void model_build(ExecCtx** const e_ctx, Model* const model, const char* m
 			CHECK_ERROR(correctness_weight_ptr_partition(*e_ctx, model->weights.wo[layer], h_ptr, 5));
 #endif
 		}
-
-#ifndef NDEBUG
-		dbg_counter++;
-#endif
 	}
-	assert(dbg_counter == 600);
 
 #if !defined(__REMOTE__)
 	const char* tokenizer_json_filepath = "gemma-4-E2B-it/tokenizer.json";
@@ -348,6 +374,7 @@ int main(void)
 	ExecCtx* e_ctx = NULL;
 	Model    model = { 0 };
 	model_build(&e_ctx, &model, model_filepath, model_config_filepath);
+	print_model_config(&model);
 
 	u32* _h_input_tokens = NULL;
 	u32  input_tokens_len = 0;
@@ -372,14 +399,17 @@ int main(void)
 		exit(EXIT_FAILURE);
 	}
 	const dim3 grid_size = input_tokens_len;  // one block per token
+	// print_dev_buf_u32(e_ctx, _d_input_tokens, input_tokens_len * sizeof *_d_input_tokens);
 	// Consult Max Threads per Block : Because model.config.dim > Max Threads per block for 4070
 	k_fetch_input_embeddings<<<grid_size, block_size>>>(_d_input_tokens, input_tokens_len, model.config.dim, model.weights.token_embedding_table, _d_input_embeddings);
-	cudaDeviceSynchronize();
-	print_dev_buf(e_ctx, _d_input_embeddings, input_embeddings_bsize);
+	CHECK_CUDA(cudaGetLastError());
+	CHECK_CUDA(cudaDeviceSynchronize());
+	print_dev_buf_bf16(e_ctx, _d_input_embeddings, input_embeddings_bsize);
 
 	k_rmsnorm<<<grid_size, block_size, block_size.x / _CU_CONST_WARP_SIZE>>>(_d_input_embeddings, model.config.dim, model.weights.rms_input[0]);
-	cudaDeviceSynchronize();
-	print_dev_buf(e_ctx, _d_input_embeddings, input_embeddings_bsize);
+	CHECK_CUDA(cudaGetLastError());
+	CHECK_CUDA(cudaDeviceSynchronize());
+	print_dev_buf_bf16(e_ctx, _d_input_embeddings, input_embeddings_bsize);
 	arena_dev_pop(&e_ctx->dev_arena, input_tokens_bsize);
 
 	model_destroy(&e_ctx, &model);
