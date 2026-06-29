@@ -18,6 +18,16 @@
       }
     },
     {
+      "name": "remote-debug",
+      "inherits": "debug",
+      "binaryDir": "${sourceDir}/build/remote-debug",
+      "cacheVariables": {
+        "CMAKE_CUDA_COMPILER": "/usr/local/cuda/bin/nvcc",
+        "CMAKE_C_FLAGS": "-D__REMOTE__",
+        "CMAKE_CUDA_FLAGS": "-D__REMOTE__"
+      }
+    },
+    {
       "name": "release",
       "inherits": "base",
       "binaryDir": "${sourceDir}/build/release",

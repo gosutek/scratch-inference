@@ -1,5 +1,4 @@
 cmake_minimum_required(VERSION 3.24)
-set(CMAKE_CUDA_COMPILER "/opt/cuda/bin/nvcc")
 
 project(inf LANGUAGES C CUDA)
 

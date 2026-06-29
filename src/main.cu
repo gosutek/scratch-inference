@@ -311,7 +311,13 @@ static void model_build(ExecCtx** const e_ctx, Model* const model, const char* m
 	}
 	assert(dbg_counter == 600);
 
-	tokenizer_build(*e_ctx, &model->tokenizer, "gemma-4-E2B-it/tokenizer.json");
+#if !defined(__REMOTE__)
+	const char* tokenizer_json_filepath = "gemma-4-E2B-it/tokenizer.json";
+#else
+	const char* tokenizer_json_filepath = "gemma-4-12B-it/tokenizer.json";
+#endif
+
+	tokenizer_build(*e_ctx, &model->tokenizer, tokenizer_json_filepath);
 
 	cJSON_Delete(header_root);
 	munmap(model_mmap, model->file_bsize);
@@ -331,8 +337,13 @@ int main(void)
 	cudaDeviceProp dev_prop = {};
 	CHECK_CUDA(cudaGetDeviceProperties(&dev_prop, 0));
 
+#if !defined(__REMOTE__)
 	const char* model_filepath = "gemma-4-E2B-it/model.safetensors";
 	const char* model_config_filepath = "gemma-4-E2B-it/config.json";
+#else
+	const char* model_filepath = "gemma-4-12B-it/model.safetensors";
+	const char* model_config_filepath = "gemma-4-12B-it/config.json";
+#endif
 
 	ExecCtx* e_ctx = NULL;
 	Model    model = { 0 };
