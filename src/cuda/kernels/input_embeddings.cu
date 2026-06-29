@@ -27,7 +27,7 @@ __global__ void k_fetch_input_embeddings(
 	const bf16* const __restrict__ embeddings_table,
 	bf16* const __restrict__ input_embeddings)
 {
-	for (i32 i = threadIdx.x; i < dim; i += blockDim.x) {
+	for (u32 i = threadIdx.x; i < dim; i += blockDim.x) {
 		const bf16 a = _d_dn_rm_get(embeddings_table, dim, input_tokens[blockIdx.x], i);
 		_d_dn_rm_set(input_embeddings, dim, blockIdx.x, i, a);
 	}

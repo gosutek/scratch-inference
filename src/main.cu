@@ -16,6 +16,7 @@
 #include "cuda_mem_wrapper.cuh"
 #include "helpers.h"
 #include "kernels/input_embeddings.cuh"
+#include "kernels/rmsnorm.cuh"
 #include "model.cuh"
 #include "tokenizer.h"
 
@@ -183,12 +184,17 @@ static void model_build(ExecCtx** const e_ctx, Model* const model, const char* m
 	CHECK_ERROR(exec_ctx_create(e_ctx));
 
 	model_parse_config(*e_ctx, model, model_config_filepath);
-	const u64 model_weight_bsize = sizeof **model->weights.wq * model->config.n_layers * 4;  // wq, wk, wv, wo = 4
+	const u64 rms_input_ptrs_bsize = model->config.n_layers * sizeof *model->weights.rms_input;  // this is n_layers * size of a bf16 pointer
+	const u64 wq_ptrs_bsize = model->config.n_layers * sizeof *model->weights.wq;
+	const u64 wk_ptrs_bsize = model->config.n_layers * sizeof *model->weights.wk;
+	const u64 wv_ptrs_bsize = model->config.n_layers * sizeof *model->weights.wv;
+	const u64 wo_ptrs_bsize = model->config.n_layers * sizeof *model->weights.wo;
 
-	CHECK_ERROR(arena_host_push((HostArena*)(*e_ctx), model_weight_bsize, (void**)&model->weights.wq));
-	model->weights.wk = (bf16**)((u8*)model->weights.wq + model_weight_bsize / 4);
-	model->weights.wv = (bf16**)((u8*)model->weights.wk + model_weight_bsize / 4);
-	model->weights.wo = (bf16**)((u8*)model->weights.wv + model_weight_bsize / 4);
+	CHECK_ERROR(arena_host_push((HostArena*)(*e_ctx), rms_input_ptrs_bsize, (void**)&(model->weights.rms_input)));
+	CHECK_ERROR(arena_host_push((HostArena*)(*e_ctx), wq_ptrs_bsize, (void**)&(model->weights.wq)));
+	CHECK_ERROR(arena_host_push((HostArena*)(*e_ctx), wk_ptrs_bsize, (void**)&(model->weights.wk)));
+	CHECK_ERROR(arena_host_push((HostArena*)(*e_ctx), wv_ptrs_bsize, (void**)&(model->weights.wv)));
+	CHECK_ERROR(arena_host_push((HostArena*)(*e_ctx), wo_ptrs_bsize, (void**)&(model->weights.wo)));
 
 	cJSON* header_root = NULL;
 	CHECK_ERROR(parse_model_header(*e_ctx, model, file, &header_root));
@@ -238,10 +244,12 @@ static void model_build(ExecCtx** const e_ctx, Model* const model, const char* m
 	i32 dbg_counter = 0;
 #endif
 
+#ifndef NDEBUG
 	if (strcmp("model.language_model.embed_tokens.weight", first_lm_node->string) != 0) {
 		fprintf(stderr, "unxpected first node of json\n");
 		exit(EXIT_FAILURE);
 	}
+#endif
 
 	model->weights.token_embedding_table = model->data;
 
@@ -265,7 +273,13 @@ static void model_build(ExecCtx** const e_ctx, Model* const model, const char* m
 		while (*p && *p != '.') ++p;  // reach '.'
 		++p;                          // skip '.'
 		const u64 offset = (u64)(cJSON_GetArrayItem(cJSON_GetObjectItem(node, "data_offsets"), 0)->valuedouble - lm_offset_start);
-		if (strcmp("self_attn.q_proj.weight", p) == 0) {
+		if (strcmp("input_layernorm.weight", p) == 0) {
+			model->weights.rms_input[layer] = (bf16*)((u8*)model->data + offset);
+#ifndef NDEBUG
+			bf16* h_ptr = (bf16*)((u8*)model_mmap + offset);
+			CHECK_ERROR(correctness_weight_ptr_partition(*e_ctx, model->weights.rms_input[layer], h_ptr, 5));
+#endif
+		} else if (strcmp("self_attn.q_proj.weight", p) == 0) {
 			model->weights.wq[layer] = (bf16*)((u8*)model->data + offset);
 #ifndef NDEBUG
 			bf16* h_ptr = (bf16*)((u8*)model_mmap + offset);
@@ -341,15 +355,18 @@ int main(void)
 	CHECK_ERROR(cu_memcpy_htd(_d_input_tokens, _h_input_tokens, input_tokens_bsize));
 	arena_host_pop_at((HostArena*)e_ctx, pop_pos);
 
-	const u32  stride = 4;
-	const dim3 block_size = model.config.dim / stride;  // 1 thread per 4 elements
+	const dim3 block_size = model.config.dim / 4;  // 1 thread per 4 elements
 	if (block_size.x > dev_prop.maxThreadsPerBlock) {
 		fprintf(stderr, "threads launched for k_fetch_input_embeddings exceeds max number of threads per block for this device\n");
 		exit(EXIT_FAILURE);
 	}
 	const dim3 grid_size = input_tokens_len;  // one block per token
 	// Consult Max Threads per Block : Because model.config.dim > Max Threads per block for 4070
-	k_fetch_input_embeddings<<<grid_size, block_size>>>(_d_input_tokens, input_tokens_len, model.config.dim, model.weights.token_embedding_table, _d_input_embeddings, stride);
+	k_fetch_input_embeddings<<<grid_size, block_size>>>(_d_input_tokens, input_tokens_len, model.config.dim, model.weights.token_embedding_table, _d_input_embeddings);
+	cudaDeviceSynchronize();
+	print_dev_buf(e_ctx, _d_input_embeddings, input_embeddings_bsize);
+
+	k_rmsnorm<<<grid_size, block_size, block_size.x / _CU_CONST_WARP_SIZE>>>(_d_input_embeddings, model.config.dim, model.weights.rms_input[0]);
 	cudaDeviceSynchronize();
 	print_dev_buf(e_ctx, _d_input_embeddings, input_embeddings_bsize);
 	arena_dev_pop(&e_ctx->dev_arena, input_tokens_bsize);

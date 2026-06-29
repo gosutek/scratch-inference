@@ -32,7 +32,8 @@ typedef struct Weights
 	// f32* token_embedding_table_per_layer; // TODO: For later
 
 	// RMS
-	// bf16** rms_input; // TODO: FOR NOW
+	// 35 pointers, one for each layer, each pointing to a bf16 flat matrix in device memory of size [vocab_size, dim]
+	bf16** rms_input;
 	// f32* rms_q;  // TODO: For later
 	// f32* rms_k; // TODO: For later
 	// f32* rms_post_attn; // TODO: For later

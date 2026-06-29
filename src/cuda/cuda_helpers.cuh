@@ -4,6 +4,8 @@
 
 #include "helpers.h"
 
+#define _CU_CONST_WARP_SIZE 32
+
 typedef __nv_bfloat16 bf16;
 
 /*
